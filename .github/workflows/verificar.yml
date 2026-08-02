@@ -1,0 +1,62 @@
+# LA MAQUINARIA — flujo de trabajo REUSABLE.
+#
+# Vive una sola vez, versionado. Los repos que lo usan sólo lo llaman:
+#
+#     jobs:
+#       verificar:
+#         uses: ansgis/maquinaria/.github/workflows/verificar.yml@v1
+#
+# Calcado de cómo lo hace r-universe: su `universe-template` son 20 líneas que
+# llaman a `r-universe-org/workflows/.github/workflows/sync.yml@v3`. Así la
+# lógica se arregla en UN lugar y todos los inquilinos la reciben, en vez de
+# tener que tocar cada repo.
+name: Verificar declaraciones
+
+on:
+  workflow_call:
+    inputs:
+      carpeta:
+        description: "Dónde viven las declaraciones a verificar"
+        required: false
+        default: "plantillas"
+        type: string
+      diccionario:
+        description: "El servicio que respalda las capacidades"
+        required: false
+        default: "https://diccionario.daiacaba.com.ar"
+        type: string
+
+# Un trabajo por vez, como hace r-universe.
+concurrency: ${{ github.workflow }}-${{ github.ref }}
+
+jobs:
+  verificar:
+    name: Cada capacidad contra el diccionario
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Traer el verificador
+        uses: actions/checkout@v5
+        with:
+          repository: ansgis/maquinaria
+          path: .maquinaria
+
+      - name: Verificar
+        env:
+          CARPETA: ${{ inputs.carpeta }}
+          DICCIONARIO: ${{ inputs.diccionario }}
+        run: python3 .maquinaria/scripts/verificar.py
+
+      - name: Publicar el resultado en el pull request
+        if: always() && github.event_name == 'pull_request'
+        env:
+          CARPETA: ${{ inputs.carpeta }}
+          DICCIONARIO: ${{ inputs.diccionario }}
+        run: |
+          {
+            echo '## Verificación de capacidades'
+            echo '```'
+            python3 .maquinaria/scripts/verificar.py || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
