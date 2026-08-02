@@ -25,6 +25,11 @@ on:
         required: false
         default: "https://diccionario.daiacaba.com.ar"
         type: string
+      maquinaria:
+        description: "De donde sale el verificador. Se cambia al mudarse a la organizacion."
+        required: false
+        default: "emri-setup/ansgis-maquinaria"
+        type: string
 
 # Un trabajo por vez, como hace r-universe.
 concurrency: ${{ github.workflow }}-${{ github.ref }}
@@ -39,7 +44,8 @@ jobs:
       - name: Traer el verificador
         uses: actions/checkout@v5
         with:
-          repository: ansgis/maquinaria
+          repository: ${{ inputs.maquinaria }}
+          ref: v1
           path: .maquinaria
 
       - name: Verificar
