@@ -5,7 +5,13 @@ Lee cada plantilla de `plantillas/` y comprueba, contra el diccionario vivo,
 que TODA capacidad declarada exista de verdad. Si alguna no existe, sale con
 error y el pull request no se puede fusionar.
 
-Es deliberadamente corto: la regla es una sola y tiene que poder leerse entera.
+Y si al lado hay un `agentes.json`, comprueba tambien que ningun agente se
+atribuya una capacidad que su seccion no declaro. Antes esto no se miraba y las
+tres listas (plantilla del registro, plantilla de la seccion, agentes.json) se
+desincronizaron sin que nadie se enterara: el catalogo publicitaba funciones que
+la seccion no declaraba. Una sola copia manda, y es la plantilla.
+
+Es deliberadamente corto: las reglas son dos y tienen que poder leerse enteras.
 """
 
 import json
@@ -21,6 +27,9 @@ import os
 BASE = os.environ.get("DICCIONARIO", "https://diccionario.daiacaba.com.ar").rstrip("/")
 DICCIONARIO = f"{BASE}/api/v1/ficha"
 CARPETA = os.environ.get("CARPETA", "plantillas")
+# El registro de agentes, si lo hay. Un repo de seccion no lo tiene y eso no es
+# una rotura: la comprobacion se saltea sola.
+AGENTES = os.environ.get("AGENTES", "agentes.json")
 CAMPOS_OBLIGATORIOS = ("providerId", "serviceId", "name", "description", "declara")
 
 # El diccionario rechaza con 403 al agente por defecto de urllib: hay que
@@ -42,6 +51,56 @@ def consultar(paquete: str, funcion: str):
         raise
 
 
+def revisar_agentes(declaradas: dict) -> list:
+    """Ningun agente puede atribuirse una capacidad que su seccion no declaro.
+
+    `declaradas` es {serviceId: {"sf::st_area", ...}} armado con las plantillas
+    que ya se verificaron arriba. Devuelve la lista de fallas.
+    """
+    ruta = pathlib.Path(AGENTES)
+    if not ruta.exists():
+        return []
+
+    print(f"\n=== {ruta.name} ===")
+    fallas = []
+    agentes = json.loads(ruta.read_text(encoding="utf-8")).get("agentes", [])
+    if not agentes:
+        print("  --   no declara agentes")
+        return []
+
+    for a in agentes:
+        ident = a.get("id", "(sin id)")
+        caps = {f"{c['paquete']}::{c['funcion']}" for c in a.get("capacidades", [])}
+        if not caps:
+            fallas.append(f"agentes.json: {ident} no declara ninguna capacidad")
+            print(f"  MAL  {ident:<28} no declara ninguna capacidad")
+            continue
+
+        # El agente dice de que seccion es. Sin eso no hay contra que comparar.
+        seccion = a.get("plantilla")
+        if not seccion:
+            fallas.append(f"agentes.json: {ident} no dice de que plantilla sale")
+            print(f"  MAL  {ident:<28} sin campo 'plantilla'")
+            continue
+        clave = seccion.split(".")[-1]      # ansgis.espacios-verdes -> espacios-verdes
+        if clave not in declaradas:
+            fallas.append(f"agentes.json: {ident} apunta a la plantilla {seccion}, que no existe")
+            print(f"  MAL  {ident:<28} la plantilla {seccion} no esta en {CARPETA}/")
+            continue
+
+        de_mas = sorted(caps - declaradas[clave])
+        if de_mas:
+            fallas.append(
+                f"agentes.json: {ident} se atribuye {', '.join(de_mas)}, "
+                f"que {seccion} no declara"
+            )
+            print(f"  MAL  {ident:<28} de mas: {', '.join(de_mas)}")
+        else:
+            print(f"  OK   {ident:<28} sus {len(caps)} capacidades salen de {seccion}")
+
+    return fallas
+
+
 def main() -> int:
     plantillas = sorted(pathlib.Path(CARPETA).glob("*.json"))
     if not plantillas:
@@ -49,6 +108,7 @@ def main() -> int:
         return 0
 
     fallas = []
+    declaradas = {}
     for ruta in plantillas:
         print(f"\n=== {ruta.name} ===")
         p = json.loads(ruta.read_text(encoding="utf-8"))
@@ -71,6 +131,8 @@ def main() -> int:
             print("  MAL  no declara ninguna capacidad")
             continue
 
+        declaradas[p["serviceId"]] = {f"{c['paquete']}::{c['funcion']}" for c in capacidades}
+
         for c in capacidades:
             nombre = f"{c['paquete']}::{c['funcion']}"
             ficha = consultar(c["paquete"], c["funcion"])
@@ -80,6 +142,8 @@ def main() -> int:
             else:
                 fallas.append(f"{ruta.name}: {nombre} no está respaldada por el diccionario")
                 print(f"  MAL  {nombre:<28} NADIE LA RESPALDA")
+
+    fallas += revisar_agentes(declaradas)
 
     print()
     if fallas:
